@@ -126,22 +126,6 @@ This comprehensive notebook includes:
 - Affirmative constraints collapse the search space
 - Visual proof that entropy affects reliability
 
-### Example 2: Simplified Demo (`demo_sync.ipynb`)
-
-Location: `entropypilot/demo_sync.ipynb`
-
-A streamlined version focusing on the core experiment:
-
-1. Quick setup and configuration
-2. Color palette generation (negative vs. affirmative)
-3. 100-run simulation with statistical tracking
-4. Visualization of results
-
-**Use this notebook if you want:**
-- A faster demonstration
-- To focus on the practical results
-- To modify and run your own experiments
-
 ## Project Structure
 
 ```
@@ -207,7 +191,6 @@ In multi-step LLM agents:
 Make sure you've installed dependencies and activated the virtual environment:
 ```bash
 uv sync
-source .venv/bin/activate
 ```
 
 ### "Missing API key" error
@@ -227,16 +210,23 @@ python -m ipykernel install --user --name=entropypilot
 
 ## License
 
-[Add your license here]
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
-[Add contribution guidelines here]
+This is a demonstration repository for educational purposes. Issues and discussions are welcome.
+
 
 ## Citation
 
-If you use this work in your research, please cite:
+If you use this work or reference these experiments, please cite:
 
-```
-[Add citation information here]
+```bibtex
+@misc{sanger2026entropypilot,
+  author = {Sanger, Tarek},
+  title = {Entropy Pilot: Controlling Entropy for Reliable LLM Systems},
+  year = {2026},
+  url = {https://github.com/tareksanger/entropy-pilot-experiments},
+  note = {Experimental demonstrations of entropy control in LLM systems}
+}
 ```
