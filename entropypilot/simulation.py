@@ -6,99 +6,91 @@ Runs the color generation multiple times and tracks:
 2. Affirmative constraint violations: How often non-blue/aqua/teal appears despite "ONLY contain"
 """
 
-import os
-import json
-import colorsys
-import asyncio
-from collections import defaultdict
-import matplotlib.pyplot as plt
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import numpy as np
-from openai import AsyncOpenAI
-from entropypilot.config import config
 
-os.environ["OPENAI_API_KEY"] = config.openai_api_key
+from entropypilot.utils import (
+    Colors,
+    get_colors_from_llm_sync,
+    hex_to_rgb,
+    is_cool_blue_aqua_teal,
+    is_red_or_orange,
+)
 
-MODEL = "gpt-4o-mini"
-TEMPERATURE = 0.0
 BATCH_SIZE = 10  # Number of concurrent requests
 
-client = AsyncOpenAI()
+
+def get_colors_from_llm(prompt: str, seed: int | None = None) -> Colors:
+    """Sync wrapper for LLM calls - returns Colors model."""
+    return get_colors_from_llm_sync(prompt, model="gpt-4o-mini", temperature=0, seed=seed)
 
 
-def hex_to_hsl(hex_color: str) -> tuple[float, float, float]:
-    """Convert hex color to HSL (Hue, Saturation, Lightness)."""
-    hex_color = hex_color.lstrip("#")
-    r, g, b = tuple(int(hex_color[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
-    h, l, s = colorsys.rgb_to_hls(r, g, b)
-    return (h * 360, s, l)  # Hue in degrees, S and L as 0-1
-
-
-def is_red_or_orange(hex_color: str) -> bool:
+def process_constraint_batch(
+    prompt: str,
+    constraint_type: str,
+    violation_check,
+    num_runs: int,
+    batch_size: int,
+    stats: dict,
+    use_unique_seeds: bool = True,
+):
     """
-    Detect if a color is a shade of red or orange.
-    Red: Hue roughly 0-30 or 330-360
-    Orange: Hue roughly 15-45
-    Combined: 0-45 or 330-360
+    Process a constraint type in batches using ThreadPoolExecutor.
+
+    Args:
+        prompt: The LLM prompt to use
+        constraint_type: Either "negative" or "affirmative"
+        violation_check: Function that returns True if a color violates the constraint
+        num_runs: Total number of runs
+        batch_size: Number of concurrent requests per batch
+        stats: Statistics dictionary to update
+        use_unique_seeds: If True, uses unique seeds to bypass OpenAI caching (default: True)
     """
-    try:
-        h, s, l = hex_to_hsl(hex_color)
-        # Need some saturation to be considered a color (not gray)
-        if s < 0.15:
-            return False
-        # Red/orange hue ranges
-        return (0 <= h <= 45) or (330 <= h <= 360)
-    except (ValueError, IndexError):
-        return False
+    with ThreadPoolExecutor(max_workers=batch_size) as executor:
+        for batch_start in range(0, num_runs, batch_size):
+            batch_end = min(batch_start + batch_size, num_runs)
+            current_batch_size = batch_end - batch_start
+            print(f"  Batch {batch_start + 1}-{batch_end}/{num_runs}...")
+
+            # Submit all tasks for this batch with unique seeds to bypass caching
+            futures = [
+                executor.submit(
+                    get_colors_from_llm,
+                    prompt,
+                    seed=random.randint(0, 1_000_000) if use_unique_seeds else None
+                )
+                for _ in range(current_batch_size)
+            ]
+
+            # Collect results in order (this maintains batch ordering)
+            results = [future.result() for future in futures]
+
+            # Process results in order
+            for i, colors in enumerate(results):
+                run_num = batch_start + i + 1
+                if colors:
+                    stats[constraint_type]["total_runs"] += 1
+                    stats[constraint_type]["total_colors"] += len(colors.palette)
+                    stats[constraint_type]["all_palettes"].append(colors.palette)
+                    violation_mask = [violation_check(c) for c in colors.palette]
+                    stats[constraint_type]["all_violations"].append(violation_mask)
+                    violations = [c for c, v in zip(colors.palette, violation_mask) if v]
+                    if violations:
+                        stats[constraint_type]["runs_with_violations"] += 1
+                        stats[constraint_type]["violation_colors"] += len(violations)
+                        if len(stats[constraint_type]["violation_examples"]) < 10:
+                            stats[constraint_type]["violation_examples"].append(
+                                {"run": run_num, "palette": colors.palette, "violations": violations}
+                            )
 
 
-def is_cool_blue_aqua_teal(hex_color: str) -> bool:
+def run_simulation(num_runs: int = 100, batch_size: int = BATCH_SIZE):
     """
-    Detect if a color is a shade of cool blue, aqua, or teal.
-    Cool blues: Hue roughly 180-260
-    Aquas/Teals: Hue roughly 160-200
-    Combined range: 160-260
-    """
-    try:
-        h, s, l = hex_to_hsl(hex_color)
-        # Very low saturation = gray (acceptable as neutral)
-        # Very high/low lightness = white/black (acceptable as neutral)
-        if s < 0.1 and (l < 0.15 or l > 0.85):
-            return True  # Allow near-black, near-white, and grays
-        # Must have some saturation to be a "color"
-        if s < 0.1:
-            return True  # Grays are acceptable
-        # Check if in the cool blue/aqua/teal hue range
-        return 160 <= h <= 260
-    except (ValueError, IndexError):
-        return False
-
-
-async def get_colors_from_llm(prompt: str) -> list[str]:
-    """Calls the LLM and returns a list of hex codes."""
-    try:
-        response = await client.chat.completions.create(
-            model=MODEL,
-            temperature=TEMPERATURE,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a color palette generator. Output only raw JSON lists of 6 hex codes under the key 'colors'.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-        )
-        content = response.choices[0].message.content
-        return json.loads(content)["colors"] # type: ignore
-    except Exception as e:
-        print(f"Error: {e}")
-        return []
-
-
-async def run_simulation(num_runs: int = 100, batch_size: int = BATCH_SIZE):
-    """
-    Run the simulation and collect statistics using batched async requests.
+    Run the simulation and collect statistics using batched concurrent requests.
     """
     neg_prompt = "Generate a palette of 6 distinct hex codes. CONSTRAINT: The palette must NOT contain any shade of red or orange."
     aff_prompt = "Generate a palette of 6 distinct hex codes. CONSTRAINT: The palette must ONLY contain shades of cool blues, aquas, and teals."
@@ -125,73 +117,29 @@ async def run_simulation(num_runs: int = 100, batch_size: int = BATCH_SIZE):
         },
     }
 
-    print(f"Starting simulation with {num_runs} runs (batch size: {batch_size})...")
-    print("=" * 60)
+    # Process negative constraints
+    print("Processing NEGATIVE constraints (NOT red/orange)...")
+    process_constraint_batch(
+        prompt=neg_prompt,
+        constraint_type="negative",
+        violation_check=is_red_or_orange,
+        num_runs=num_runs,
+        batch_size=batch_size,
+        stats=stats,
+    )
 
-    # Process in batches
-    for batch_start in range(0, num_runs, batch_size):
-        batch_end = min(batch_start + batch_size, num_runs)
-        current_batch_size = batch_end - batch_start
-        print(f"Processing batch {batch_start + 1}-{batch_end}/{num_runs}...")
-
-        # Create tasks for both negative and affirmative prompts for this batch
-        neg_tasks = [get_colors_from_llm(neg_prompt) for _ in range(current_batch_size)]
-        aff_tasks = [get_colors_from_llm(aff_prompt) for _ in range(current_batch_size)]
-
-        # Run all tasks concurrently
-        all_results = await asyncio.gather(*neg_tasks, *aff_tasks)
-
-        # Split results back into negative and affirmative
-        neg_results = all_results[:current_batch_size]
-        aff_results = all_results[current_batch_size:]
-
-        # Process negative constraint results
-        for i, neg_colors in enumerate(neg_results):
-            run_num = batch_start + i + 1
-            if neg_colors:
-                stats["negative"]["total_runs"] += 1
-                stats["negative"]["total_colors"] += len(neg_colors)
-                stats["negative"]["all_palettes"].append(neg_colors)
-                violation_mask = [is_red_or_orange(c) for c in neg_colors]
-                stats["negative"]["all_violations"].append(violation_mask)
-                violations = [c for c, v in zip(neg_colors, violation_mask) if v]
-                if violations:
-                    stats["negative"]["runs_with_violations"] += 1
-                    stats["negative"]["violation_colors"] += len(violations)
-                    if len(stats["negative"]["violation_examples"]) < 10:
-                        stats["negative"]["violation_examples"].append(
-                            {"run": run_num, "palette": neg_colors, "violations": violations}
-                        )
-
-        # Process affirmative constraint results
-        for i, aff_colors in enumerate(aff_results):
-            run_num = batch_start + i + 1
-            if aff_colors:
-                stats["affirmative"]["total_runs"] += 1
-                stats["affirmative"]["total_colors"] += len(aff_colors)
-                stats["affirmative"]["all_palettes"].append(aff_colors)
-                violation_mask = [not is_cool_blue_aqua_teal(c) for c in aff_colors]
-                stats["affirmative"]["all_violations"].append(violation_mask)
-                violations = [c for c, v in zip(aff_colors, violation_mask) if v]
-                if violations:
-                    stats["affirmative"]["runs_with_violations"] += 1
-                    stats["affirmative"]["violation_colors"] += len(violations)
-                    if len(stats["affirmative"]["violation_examples"]) < 10:
-                        stats["affirmative"]["violation_examples"].append(
-                            {"run": run_num, "palette": aff_colors, "violations": violations}
-                        )
+    # Process affirmative constraints
+    print("\nProcessing AFFIRMATIVE constraints (ONLY blues/aquas/teals)...")
+    process_constraint_batch(
+        prompt=aff_prompt,
+        constraint_type="affirmative",
+        violation_check=lambda c: not is_cool_blue_aqua_teal(c),
+        num_runs=num_runs,
+        batch_size=batch_size,
+        stats=stats,
+    )
 
     return stats
-
-
-def hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
-    """Convert hex color to RGB tuple (0-1 range) for matplotlib."""
-    hex_color = hex_color.lstrip("#")
-    try:
-        r, g, b = tuple(int(hex_color[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
-        return (r, g, b)
-    except (ValueError, IndexError):
-        return (0.5, 0.5, 0.5)  # Gray fallback
 
 
 def plot_color_palettes(stats: dict, max_palettes: int = 20):
@@ -242,8 +190,6 @@ def plot_color_palettes(stats: dict, max_palettes: int = 20):
 
     plt.suptitle("Generated Color Palettes (red border = violation)", fontsize=14, fontweight="bold")
     plt.tight_layout()
-    plt.savefig("color_palettes.png", dpi=150, bbox_inches="tight")
-    print("\nSaved color palettes to: color_palettes.png")
     plt.show()
 
 
@@ -292,8 +238,6 @@ def plot_results_graph(stats: dict):
 
     plt.suptitle("Constraint Violation Comparison", fontsize=14, fontweight="bold")
     plt.tight_layout(rect=[0, 0.05, 1, 0.95]) # type: ignore
-    plt.savefig("violation_rates.png", dpi=150, bbox_inches="tight")
-    print("Saved violation rates graph to: violation_rates.png")
     plt.show()
 
 
@@ -399,7 +343,7 @@ if __name__ == "__main__":
     num_runs = min(max(args.num_runs, 1), 400)  # Clamp between 1-400
     BATCH_SIZE = max(1, args.batch_size)  # Override global batch size
 
-    stats = asyncio.run(run_simulation(num_runs, batch_size=BATCH_SIZE))
+    stats = run_simulation(num_runs, batch_size=BATCH_SIZE)
     print_results(stats)
 
     if not args.no_plot:

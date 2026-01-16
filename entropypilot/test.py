@@ -1,102 +1,18 @@
-import json
-import os
-
-import matplotlib.patches as patches
 import matplotlib.pyplot as plt
-from openai import OpenAI
 
-from entropypilot.config import config
+from entropypilot.utils import draw_palette_on_axis, get_colors_from_llm_sync
 
-os.environ["OPENAI_API_KEY"] = config.openai_api_key
-
-# 1. SETUP CLIENT
+# 1. SETUP
 # Using a slightly older/smaller model (like gpt-3.5 or gpt-4-turbo)
 # often highlights these architectural issues better than the newest flagship.
 MODEL = "gpt-4o-mini"
 TEMPERATURE = 0.9
 
-client = OpenAI()
-
 
 def get_colors_from_llm(prompt):
-    """
-    Calls the LLM and demands a raw JSON list of hex codes.
-    """
+    """Wrapper around sync LLM interface with logging."""
     print(f"Asking LLM: '{prompt}'...")
-    try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            temperature=TEMPERATURE,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a color palette generator. Output only raw JSON lists of 6 hex codes under the key 'colors'.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-        )
-        content = response.choices[0].message.content
-        return json.loads(content)["colors"]
-    except Exception as e:
-        print(f"Error generating colors: {e}")
-        # Return a fallback gray palette if LLM fails entirely
-        return ["#cccccc"] * 6
-
-
-def draw_palette_on_axis(ax, colors, title, subtitle):
-    """
-    Draws color swatches onto a specific matplotlib Axis (ax).
-    """
-    # Main Title
-    ax.text(0, 1.3, title, fontsize=12, fontweight="bold", transform=ax.transAxes)
-    # Subtitle explaining the mechanism
-    ax.text(
-        0,
-        1.1,
-        subtitle,
-        fontsize=10,
-        fontstyle="italic",
-        color="#555555",
-        transform=ax.transAxes,
-    )
-
-    # Draw the swatches
-    for i, color in enumerate(colors):
-        # Draw the colored rectangle
-        # Coordinates are (x, y), width, height
-        rect = patches.Rectangle(
-            (i, 0), 1, 1, linewidth=1, edgecolor="#e0e0e0", facecolor=color
-        )
-        ax.add_patch(rect)
-
-        # Add the hex code text below
-        # Use try/except in case the LLM generates invalid hex colors that break matplotlib
-        try:
-            ax.text(
-                i + 0.5,
-                -0.2,
-                color,
-                ha="center",
-                va="center",
-                fontsize=9,
-                family="monospace",
-            )
-        except:
-            ax.text(
-                i + 0.5,
-                -0.2,
-                "INVALID",
-                ha="center",
-                va="center",
-                fontsize=8,
-                color="red",
-            )
-
-    # Clean up the axis view
-    ax.set_xlim(0, len(colors))
-    ax.set_ylim(0, 1)
-    ax.axis("off")  # Hide X/Y axes and ticks
+    return get_colors_from_llm_sync(prompt, model=MODEL, temperature=TEMPERATURE)
 
 
 # =========================================
