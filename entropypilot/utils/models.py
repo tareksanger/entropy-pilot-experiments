@@ -14,7 +14,7 @@ class Colors(BaseModel):
     @classmethod
     def validate_palette(cls, v):
         if isinstance(v, list):
-            if all(color.strip().startswith("#") for color in v):
-                return v
-            return ['#' + color.strip() for color in v if not color.strip().startswith("#")]
-    
+            return [
+                f"#{color.strip()}" if not color.strip().startswith("#") else color.strip()
+                for color in v
+            ]
