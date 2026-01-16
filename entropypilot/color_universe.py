@@ -206,7 +206,7 @@ def plot_universe_interactive(aff_data, neg_data):
         )
 
     # Update subplot titles to include stats
-    fig.layout.annotations[0].update(
+    fig.layout.annotations[0].update( # type: ignore
         text=(
             f'<b>UNIVERSE A: Affirmative Constraint</b><br>'
             f'<sub>Low Entropy - "Use ONLY cool blues and teals"<br>'
@@ -214,7 +214,7 @@ def plot_universe_interactive(aff_data, neg_data):
         ),
         font=dict(size=12)
     )
-    fig.layout.annotations[1].update(
+    fig.layout.annotations[1].update( # type: ignore
         text=(
             f'<b>UNIVERSE B: Negative Constraint</b><br>'
             f'<sub>High Entropy - "Do NOT use red or orange"<br>'
@@ -245,7 +245,7 @@ def render_matplotlib():
     """Render using matplotlib (static with basic rotation)."""
     print("Rendering 3D Visualizations with Matplotlib...")
     fig = plt.figure(figsize=(14, 7))
-    fig.canvas.manager.set_window_title(
+    fig.canvas.manager.set_window_title( # type: ignore
         "Visualizing Probability Spaces: Affirmative vs Negative"
     )
 
